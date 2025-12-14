@@ -65,7 +65,7 @@ class Pix:
         self.payload += f"{crc:04X}"
         return self.payload
     
-    def generate_qr_code(self, filename: str = "pix_qr.png"):
+    def generate_qr_code(self, filename: str = "pix_qr.png") -> bytes:
         if not hasattr(self, 'payload'):
             self.generate_payload()
         qr = qrcode.QRCode(
@@ -79,3 +79,8 @@ class Pix:
 
         img = qr.make_image(fill_color="black", back_color="white")
         img.save(filename)
+
+        with open(filename, "rb") as image_file:
+            img = image_file.read()
+
+        return img
