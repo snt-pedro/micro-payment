@@ -47,7 +47,7 @@ class Pix:
 
         print(self.merchant_acc_info)
 
-    def generate_payload(self) -> str:
+    def __generate_payload(self) -> str:
         self.payload = (
             self.payload_format +
             self.merchant_acc_info +
@@ -67,7 +67,8 @@ class Pix:
     
     def generate_qr_code(self, filename: str = "pix_qr.png") -> bytes:
         if not hasattr(self, 'payload'):
-            self.generate_payload()
+            self.__generate_payload()
+
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -81,6 +82,4 @@ class Pix:
         img.save(filename)
 
         with open(filename, "rb") as image_file:
-            img = image_file.read()
-
-        return img
+            return image_file.read()

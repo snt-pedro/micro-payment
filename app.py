@@ -1,16 +1,17 @@
 from flask import Flask, request
 from flasgger import Swagger, swag_from
 from payment_methods.Pix import Pix
+from payment_methods.BankSlip import BankSlip
 import base64
 
 app = Flask(__name__)
 swagger = Swagger(app)
 
-@app.route("/", methods=["POST"])
+@app.route("/generate_pix", methods=["POST"])
 @swag_from(
     {
         "tags": ["Payment"],
-        "summary": "Registra um novo pagamento",
+        "summary": "Gera um pagamento PIX",
         "description": "Esse endpoint cria um novo registro de pagamento PIX.",
         "parameters": [
             {
@@ -63,7 +64,7 @@ swagger = Swagger(app)
         },
     }
 )
-def hello_world():
+def generate_pix():
     json_data = request.get_json()
 
     merchant_name = json_data.get("merchant_name")
@@ -82,7 +83,6 @@ def hello_world():
         merchant_city=merchant_city,
         transaction_id=transaction_id
     )
-    payload = pix_payment.generate_payload()
 
     qr_path = "pix_qr.png"
     pix_payment.generate_qr_code(qr_path)
@@ -91,13 +91,104 @@ def hello_world():
         with open(qr_path, "rb") as f:
             qrcode_b64 = base64.b64encode(f.read()).decode("utf-8")
     except Exception as e:
-        return {"message": "Falha ao gerar a imagem do QRCode", "error": str(e)}, 500
+        return {"message": "Falha ao codificar a imagem do QRCode", "error": str(e)}, 500
 
     return {
         "message": "Pagamento registrado com sucesso!",
         "merchant_name": merchant_name,
         "amount": amount,
-        "payload": payload,
         "qrcode_base64": qrcode_b64,
         "qrcode_mime": "image/png"
+    }, 200
+
+
+@app.route("/generate_bankslip", methods=["POST"])
+@swag_from(
+    {
+        "tags": ["Payment"],
+        "summary": "Gera um boleto bancário",
+        "description": "Esse endpoint gera um boleto bancário para pagamento.",
+        "parameters": [
+            {
+                "name": "body",
+                "in": "body",
+                "required": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "payer_name": {"type": "string", "example": "Victor Pinheiro"},
+                        "payer_document": {"type": "string", "example": "123.456.789-00"},
+                        "amount": {"type": "number", "format": "float", "example": 150.75},
+                        "payer_address": {"type": "string", "example": "Av. José Caetano de Almeida, 123"},
+                        "payer_neighborhood": {"type": "string", "example": "Combate"},
+                        "payer_city": {"type": "string", "example": "Ceará"},
+                        "payer_state": {"type": "string", "example": "CE"},
+                        "payer_zip": {"type": "string", "example": "63900-000"}
+                    }
+                }
+            }
+        ],
+        "responses": {
+            200: {
+                "description": "Boleto gerado com sucesso",
+                "examples": {
+                    "application/json": {
+                        "message": "Boleto gerado com sucesso!",
+                        "payer_name": "João Silva",
+                        "amount": 150.75,
+                        "bank_slip": "<bank slip details>"
+                    }
+                },
+            },
+            400: {
+                "description": "Requisição inválida",
+                "examples": {
+                    "application/json": {
+                        "message": "Missing required fields"
+                    }
+                },
+            },
+        },
+    }
+)
+def generate_bankslip():
+    json_data = request.get_json()
+
+    payer_name = json_data.get("payer_name")
+    payer_document = json_data.get("payer_document")
+    amount = json_data.get("amount")
+    payer_address = json_data.get("payer_address")
+    payer_neighborhood = json_data.get("payer_neighborhood")
+    payer_city = json_data.get("payer_city")
+    payer_state = json_data.get("payer_state")
+    payer_zip = json_data.get("payer_zip")
+
+    if not all([payer_name, payer_document, amount, payer_address, payer_neighborhood, payer_city, payer_state, payer_zip]):
+        return {"message": "Missing required fields"}, 400
+    
+    bank_slip_payment = BankSlip(
+        payer_name=payer_name,
+        payer_document=payer_document,
+        amount=float(amount),
+        payer_address=payer_address,
+        payer_neighborhood=payer_neighborhood,
+        payer_city=payer_city,
+        payer_state=payer_state,
+        payer_zip=payer_zip
+    )
+    pdf_path = "bank_slip.pdf"
+    bank_slip = bank_slip_payment.generate_bank_slip_pdf(pdf_path)
+
+    try:
+        with open(pdf_path, "rb") as f:
+            bank_slip_b64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        return {"message": "Falha ao codificar o PDF do boleto", "error": str(e)}, 500
+
+    return {
+        "message": "Bank slip generated successfully!",
+        "payer_name": payer_name,
+        "amount": amount,
+        "bank_slip": bank_slip_b64,
+        "bank_slip_mime": "application/pdf"
     }, 200
