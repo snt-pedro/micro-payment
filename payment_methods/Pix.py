@@ -45,8 +45,6 @@ class Pix:
 
         self.crc16 = '6304'
 
-        print(self.merchant_acc_info)
-
     def __generate_payload(self) -> str:
         self.payload = (
             self.payload_format +
