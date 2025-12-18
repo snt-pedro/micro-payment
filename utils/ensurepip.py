@@ -1,4 +1,4 @@
-import shutil, tempfile, os
+import shutil, tempfile, os, subprocess, sys
 
 def _ensure_pip():
     if shutil.which("pip") is None:

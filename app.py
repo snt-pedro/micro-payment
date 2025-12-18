@@ -1,8 +1,12 @@
+import base64
+import json
 from flask import Flask, request
 from flasgger import Swagger, swag_from
 from payment_methods.Pix import Pix
 from payment_methods.BankSlip import BankSlip
-import base64
+from utils.redis_client import redis_client
+from decorators.circuit_breaker import circuit_breaker_decorator
+from decorators.retry import retry_decorator
 
 app = Flask(__name__)
 swagger = Swagger(app)
@@ -64,9 +68,13 @@ swagger = Swagger(app)
         },
     }
 )
+@circuit_breaker_decorator
 def generate_pix():
     json_data = request.get_json()
 
+    if json_data.get("fail", False):
+        raise Exception("Simulated failure for resilience testing.")
+    
     merchant_name = json_data.get("merchant_name")
     pix_key = json_data.get("pix_key")
     amount = json_data.get("amount")
@@ -84,14 +92,10 @@ def generate_pix():
         transaction_id=transaction_id
     )
 
-    qr_path = "pix_qr.png"
-    pix_payment.generate_qr_code(qr_path)
+    qrcode_bytes = pix_payment.generate_qr_code("pix_qr.png")
+    qrcode_b64 = base64.b64encode(qrcode_bytes).decode("utf-8")
 
-    try:
-        with open(qr_path, "rb") as f:
-            qrcode_b64 = base64.b64encode(f.read()).decode("utf-8")
-    except Exception as e:
-        return {"message": "Falha ao codificar a imagem do QRCode", "error": str(e)}, 500
+    redis_client.set(qrcode_b64, json.dumps({"status": "registered"}))
 
     return {
         "message": "Pagamento registrado com sucesso!",
@@ -151,8 +155,12 @@ def generate_pix():
         },
     }
 )
+@circuit_breaker_decorator
 def generate_bankslip():
     json_data = request.get_json()
+
+    if json_data.get("fail", False):
+        raise Exception("Simulated failure for resilience testing.")
 
     payer_name = json_data.get("payer_name")
     payer_document = json_data.get("payer_document")
@@ -176,14 +184,10 @@ def generate_bankslip():
         payer_state=payer_state,
         payer_zip=payer_zip
     )
-    pdf_path = "bank_slip.pdf"
-    bank_slip = bank_slip_payment.generate_bank_slip_pdf(pdf_path)
+    bank_slip_bytes = bank_slip_payment.generate_bank_slip_pdf("bank_slip.pdf")
+    bank_slip_b64 = base64.b64encode(bank_slip_bytes).decode("utf-8")
 
-    try:
-        with open(pdf_path, "rb") as f:
-            bank_slip_b64 = base64.b64encode(f.read()).decode("utf-8")
-    except Exception as e:
-        return {"message": "Falha ao codificar o PDF do boleto", "error": str(e)}, 500
+    redis_client.set(bank_slip_b64, json.dumps({"status": "registered"}))
 
     return {
         "message": "Bank slip generated successfully!",
@@ -191,4 +195,65 @@ def generate_bankslip():
         "amount": amount,
         "bank_slip": bank_slip_b64,
         "bank_slip_mime": "application/pdf"
+    }, 200
+
+
+@app.route("/payment_status", methods=["POST"])
+@swag_from(
+    {
+        "tags": ["Payment"],
+        "summary": "Verifica o status de um pagamento",
+        "description": "Esse endpoint verifica o status de um pagamento.",
+        "parameters": [
+            {
+                "name": "body",
+                "in": "body",
+                "required": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "transaction_id": {"type": "string", "example": "1234567890"}
+                    }
+                }
+            }
+        ],
+        "responses": {
+            200: {
+                "description": "Status do pagamento recuperado com sucesso",
+                "examples": {
+                    "application/json": {
+                        "message": "Payment status retrieved successfully!",
+                        "transaction_id": "1234567890",
+                        "status": "paid"
+                    }
+                },
+            },
+            404: {
+                "description": "Pagamento não encontrado",
+                "examples": {
+                    "application/json": {
+                        "message": "Payment not found"
+                    }
+                },
+            },
+        },
+    }
+)
+@retry_decorator(max_retries=5, delay=2)
+def payment_status():
+    json_data = request.get_json()
+    transaction_id = json_data.get("transaction_id")
+
+    if not transaction_id:
+        return {"message": "Missing required fields"}, 400
+
+    payment_data = redis_client.get(transaction_id)
+
+    if not payment_data:
+        return {"message": "Payment not found"}, 404
+        
+    return {
+        "message": "Payment status retrieved successfully!",
+        "payment_status": json.loads(payment_data).get("status"),
+        "transaction_id": transaction_id
     }, 200
