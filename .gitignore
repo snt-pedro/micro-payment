@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+bank_slip.pdf
+pix_qr.png
